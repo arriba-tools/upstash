@@ -3,7 +3,6 @@
 use std::fmt;
 use std::io::Write;
 use std::path::Path;
-use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Where a run writes what it prints.
@@ -46,65 +45,12 @@ impl fmt::Display for Stop {
     }
 }
 
-/// The value of the setting `name`. It is the environment variable `name`, or else the Actions
-/// variable `name` of `repo`, by default the repository gh resolves here.
-pub fn setting(name: &str, repo: Option<&str>) -> Result<String, Stop> {
+/// The value of the environment variable `name`, trimmed, or why there is none.
+pub fn env(name: &str) -> Result<String, Stop> {
     match std::env::var(name) {
-        Ok(v) if !v.trim().is_empty() => Ok(v),
-        _ => variable(name, &resolve(name, repo)?),
+        Ok(v) if !v.trim().is_empty() => Ok(v.trim().to_string()),
+        _ => Err(Stop::Failed(format!("{name} is unset"))),
     }
-}
-
-/// `repo`, or the repository gh resolves for the working directory.
-fn resolve(name: &str, repo: Option<&str>) -> Result<String, Stop> {
-    match repo {
-        Some(r) => Ok(r.to_string()),
-        None => gh(&[
-            "repo",
-            "view",
-            "--json",
-            "nameWithOwner",
-            "--jq",
-            ".nameWithOwner",
-        ])
-        .map_err(|e| {
-            Stop::Failed(format!(
-                "No repository to read {name} from, so pass -R OWNER/REPO: {e}"
-            ))
-        }),
-    }
-}
-
-fn variable(name: &str, repo: &str) -> Result<String, Stop> {
-    gh(&[
-        "api",
-        &format!("repos/{repo}/actions/variables/{name}"),
-        "--jq",
-        ".value",
-    ])
-    .map_err(|e| {
-        Stop::Failed(format!(
-            "Reading the Actions variable {name} of {repo} failed: {e}"
-        ))
-    })
-}
-
-fn gh(args: &[&str]) -> Result<String, String> {
-    let out = Command::new("gh")
-        .args(args)
-        .output()
-        .map_err(|e| format!("gh: {e}"))?;
-    if !out.status.success() {
-        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
-    }
-    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
-}
-
-/// The token an Upstash REST URL carries as its _token parameter, as written.
-pub fn token(url: &str) -> Option<&str> {
-    url.split_once("_token=")
-        .map(|(_, t)| t.split('&').next().unwrap_or_default())
-        .filter(|t| !t.is_empty())
 }
 
 /// `s` with every byte but the unreserved ones percent-encoded, as a URL's path segment must be.
@@ -140,27 +86,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn token_is_the_tokens_parameter_as_written() {
-        assert_eq!(token("https://h?_token=Ab+c/d=&y=1"), Some("Ab+c/d="));
-        assert_eq!(token("https://h?y=1&_token=t"), Some("t"));
-        assert_eq!(token("https://h?_token="), None);
-        assert_eq!(token("https://h"), None);
-    }
-
-    #[test]
     fn encode_keeps_only_unreserved_bytes() {
         assert_eq!(encode("a-b_c.d~e"), "a-b_c.d~e");
         assert_eq!(encode("a/b c"), "a%2Fb%20c");
     }
 
     #[test]
-    fn a_setting_comes_from_the_environment_first() {
-        // SAFETY: no other test reads or writes this variable.
-        unsafe { std::env::set_var("UPSTASH_ARRIBA_TEST_SETTING", " v ") };
-        assert_eq!(
-            setting("UPSTASH_ARRIBA_TEST_SETTING", Some("o/r")),
-            Ok(" v ".into())
-        );
+    fn env_trims_the_value_and_refuses_an_unset_one() {
+        // SAFETY: no other test reads or writes these variables.
+        unsafe { std::env::set_var("UPSTASH_ARRIBA_TEST_SET", " v ") };
+        assert_eq!(env("UPSTASH_ARRIBA_TEST_SET"), Ok("v".into()));
+        let unset = Stop::Failed("UPSTASH_ARRIBA_TEST_UNSET is unset".into());
+        assert_eq!(env("UPSTASH_ARRIBA_TEST_UNSET"), Err(unset));
     }
 
     #[test]

@@ -10,19 +10,15 @@ use std::path::PathBuf;
 pub struct Cli {
     #[command(subcommand)]
     pub command: Command,
-
-    /// Repository whose Actions variable AGENT_VECTOR_URL names the index, read when the
-    /// environment variable is unset (default: current repo)
-    #[arg(short = 'R', long, global = true, value_name = "OWNER/REPO")]
-    pub repo: Option<String>,
 }
 
 #[derive(Subcommand)]
 pub enum Command {
     /// Store notes in an Upstash Vector index and search them
     ///
-    /// The index is the one the variable AGENT_VECTOR_URL names, an Upstash Vector REST URL that
-    /// carries its token as _token. A namespace of the index holds one project's notes.
+    /// The index is the one the environment variables UPSTASH_VECTOR_REST_URL and
+    /// UPSTASH_VECTOR_REST_TOKEN name, as the index's Connect section in the Upstash Console gives
+    /// them. A namespace of the index holds one project's notes.
     #[command(subcommand)]
     Vector(VectorCommand),
     /// Replace this binary with the one from the latest release

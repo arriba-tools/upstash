@@ -23,8 +23,9 @@ fn main() {
         err: &mut err,
     };
     let result = match &cli.command {
-        Command::Vector(command) => vector::connect(cli.repo.as_deref())
-            .and_then(|mut index| vector::run(&mut index, command, &mut io)),
+        Command::Vector(command) => {
+            vector::connect().and_then(|mut index| vector::run(&mut index, command, &mut io))
+        }
         Command::Upgrade => upgrade::upgrade(&mut io),
     };
     let code = finish(result, &mut io);

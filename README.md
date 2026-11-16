@@ -42,29 +42,30 @@ figure still finds its note.
 2. From the index's **Connect** section, copy `UPSTASH_VECTOR_REST_URL` and
    `UPSTASH_VECTOR_REST_TOKEN`. Take the token itself, not the read-only one, since `remember`
    writes.
-3. Store them in `AGENT_VECTOR_URL` as one URL, with the token as `_token`, either in the
-   environment or as an Actions variable of a repository that every machine's `gh` can read:
+3. Set them as environment variables of those names, which every `vector` command reads. Keep them
+   in a secrets manager rather than a file. With 1Password, an env file of references, here
+   `upstash.env`, holds no secret:
 
    ```
-   gh variable set AGENT_VECTOR_URL -R owner/comms --body 'https://<endpoint>?_token=<token>'
+   UPSTASH_VECTOR_REST_URL=op://<vault>/<item>/url
+   UPSTASH_VECTOR_REST_TOKEN=op://<vault>/<item>/token
    ```
 
-4. Check that a machine reaches it. A new index has no notes.
+   and `op run` resolves them for one command:
 
    ```
-   upstash-arriba -R owner/comms vector recall my-project test
+   op run --env-file upstash.env -- upstash-arriba vector recall my-project test
    ```
 
-The environment variable wins. Without it, the tool reads the Actions variable of the repository
-that `-R` names, or of the one `gh` resolves in the working directory. Never print the value.
+4. Check that a machine reaches it, as above. A new index has no notes. Never print the token.
 
 ## Usage
 
 ```
-upstash-arriba -R owner/comms vector remember linux my-project --text "Fits cross at D 236.6"
-upstash-arriba -R owner/comms vector recall my-project "where do the fits cross" --count 5
-upstash-arriba -R owner/comms vector remember linux my-project --replace <ID> --text "Fits cross at D 236.7"
-upstash-arriba -R owner/comms vector forget my-project <ID> [<ID>...]
+upstash-arriba vector remember linux my-project --text "Fits cross at D 236.6"
+upstash-arriba vector recall my-project "where do the fits cross" --count 5
+upstash-arriba vector remember linux my-project --replace <ID> --text "Fits cross at D 236.7"
+upstash-arriba vector forget my-project <ID> [<ID>...]
 upstash-arriba upgrade
 ```
 

@@ -10,8 +10,10 @@ use ureq::typestate::WithBody;
 use crate::cli::{ForgetArgs, RecallArgs, RememberArgs, VectorCommand};
 use crate::common::{self, Io, Stop, now_ms, say};
 
-/// The environment variable, and the Actions variable, that holds the index's REST URL.
-pub const VECTOR_VAR: &str = "AGENT_VECTOR_URL";
+/// The environment variables that hold the index's REST URL and token, named as the index's
+/// Connect section in the Upstash Console names them.
+pub const URL_VAR: &str = "UPSTASH_VECTOR_REST_URL";
+pub const TOKEN_VAR: &str = "UPSTASH_VECTOR_REST_TOKEN";
 
 /// Sends one request to the index and returns its result.
 pub trait Index {
@@ -27,14 +29,15 @@ pub struct Upstash {
 }
 
 impl Upstash {
-    pub fn open(value: &str) -> Result<Self, Stop> {
-        let (base, token) = rest_url(value)?;
+    pub fn open(url: &str, token: &str) -> Result<Self, Stop> {
+        let base = base_url(url)?;
         let agent = ureq::Agent::config_builder()
             .timeout_global(Some(Duration::from_secs(30)))
             // An error status still carries the index's reason in its body.
             .http_status_as_error(false)
             .build()
             .into();
+        let token = token.to_string();
         Ok(Self { base, token, agent })
     }
 
@@ -96,23 +99,19 @@ fn answer(path: &str, status: u16, text: &str) -> Result<Value, Stop> {
     }
 }
 
-/// The base URL and the token of `value`, an index's REST URL that carries its token as _token.
-fn rest_url(value: &str) -> Result<(String, String), Stop> {
-    let host = value
-        .strip_prefix("https://")
+/// The https origin of `url`, an index's REST URL.
+fn base_url(url: &str) -> Result<String, Stop> {
+    url.strip_prefix("https://")
         .and_then(|rest| rest.split(['/', '?']).next())
-        .filter(|h| !h.is_empty());
-    match (host, common::token(value)) {
-        (Some(host), Some(token)) => Ok((format!("https://{host}"), token.to_string())),
-        _ => Err(Stop::Failed(format!(
-            "{VECTOR_VAR} is not an https:// Upstash Vector REST URL with a _token"
-        ))),
-    }
+        .filter(|host| !host.is_empty())
+        .map(|host| format!("https://{host}"))
+        .ok_or_else(|| Stop::Failed(format!("{URL_VAR} is not an https:// URL")))
 }
 
-/// The index for this run, from the setting AGENT_VECTOR_URL.
-pub fn connect(repo: Option<&str>) -> Result<Upstash, Stop> {
-    Upstash::open(common::setting(VECTOR_VAR, repo)?.trim())
+/// The index for this run, from the environment variables UPSTASH_VECTOR_REST_URL and
+/// UPSTASH_VECTOR_REST_TOKEN.
+pub fn connect() -> Result<Upstash, Stop> {
+    Upstash::open(&common::env(URL_VAR)?, &common::env(TOKEN_VAR)?)
 }
 
 /// Run a command that reads or writes the index.
@@ -446,21 +445,20 @@ mod tests {
     }
 
     #[test]
-    fn rest_url_takes_an_https_url_with_a_token() {
-        assert_eq!(
-            rest_url("https://x-vector.upstash.io/query?_token=Ab+c/d=&y=1").unwrap(),
-            (
-                "https://x-vector.upstash.io".to_string(),
-                "Ab+c/d=".to_string()
-            )
-        );
-        for bad in [
-            "",
+    fn base_url_is_the_https_origin() {
+        for url in [
             "https://x-vector.upstash.io",
-            "http://x?_token=t",
-            "https://?_token=t",
+            "https://x-vector.upstash.io/",
+            "https://x-vector.upstash.io/query?y=1",
         ] {
-            assert!(matches!(rest_url(bad), Err(Stop::Failed(_))), "{bad}");
+            assert_eq!(
+                base_url(url).unwrap(),
+                "https://x-vector.upstash.io",
+                "{url}"
+            );
+        }
+        for bad in ["", "http://x-vector.upstash.io", "https://", "https:///p"] {
+            assert!(matches!(base_url(bad), Err(Stop::Failed(_))), "{bad}");
         }
     }
 }
