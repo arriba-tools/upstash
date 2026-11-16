@@ -36,6 +36,10 @@ pub enum VectorCommand {
     Remember(RememberArgs),
     /// Search a namespace's notes by meaning and by keyword together, best match first
     Recall(RecallArgs),
+    /// Delete notes by ID
+    ///
+    /// Exits 1 when the index deleted fewer notes than the IDs given, since the rest named no note.
+    Forget(ForgetArgs),
 }
 
 #[derive(Args)]
@@ -74,4 +78,14 @@ pub struct RecallArgs {
     #[arg(long, value_name = "N", default_value_t = 5,
           value_parser = clap::value_parser!(u64).range(1..=1000))]
     pub count: u64,
+}
+
+#[derive(Args)]
+pub struct ForgetArgs {
+    /// Namespace that keeps the notes
+    pub namespace: String,
+
+    /// IDs of the notes to delete
+    #[arg(required = true)]
+    pub ids: Vec<String>,
 }
