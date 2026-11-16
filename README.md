@@ -64,6 +64,7 @@ that `-R` names, or of the one `gh` resolves in the working directory. Never pri
 upstash-arriba -R owner/comms vector remember linux my-project --text "Fits cross at D 236.6"
 upstash-arriba -R owner/comms vector recall my-project "where do the fits cross" --count 5
 upstash-arriba -R owner/comms vector remember linux my-project --replace <ID> --text "Fits cross at D 236.7"
+upstash-arriba -R owner/comms vector forget my-project <ID> [<ID>...]
 upstash-arriba upgrade
 ```
 
@@ -71,6 +72,7 @@ upstash-arriba upgrade
 |---------|-------------|
 | `vector remember <NAME> <NAMESPACE>` | Store a note from a `--file` or `--text`, and print its ID, or with `--replace` put it in place of a stored note |
 | `vector recall <NAMESPACE> <QUERY>` | Print the namespace's notes that best match, by meaning and by keyword, best first |
+| `vector forget <NAMESPACE> <ID>...` | Delete notes by ID |
 | `upgrade` | Replace the binary with the one from the latest release |
 
 A namespace holds one project's notes. A note's ID is the milliseconds since 1970, the name that
@@ -80,6 +82,9 @@ outweighs common words.
 
 `--replace` stores a correction under the ID of the note it corrects, so `recall` no longer finds
 the old text. It refuses an ID that names no note in the namespace, rather than store a new one.
+
+`forget` deletes the notes with the IDs given and says how many it deleted. When some ID named no
+note, it says so and exits 1.
 
 A run exits 0 when it succeeds, 1 when the index refuses a request or the run fails before sending
 one, and 4 when the index can't be reached. Neither command retries.

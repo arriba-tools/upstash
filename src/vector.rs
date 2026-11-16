@@ -1,9 +1,13 @@
-//! The Upstash Vector index that `vector remember` stores notes in and `vector recall` searches.
+//! The Upstash Vector index that `vector remember` stores notes in, `vector recall` searches and
+//! `vector forget` deletes from.
 
 use serde_json::{Value, json};
+use std::collections::BTreeSet;
 use std::time::Duration;
+use ureq::RequestBuilder;
+use ureq::typestate::WithBody;
 
-use crate::cli::{RecallArgs, RememberArgs, VectorCommand};
+use crate::cli::{ForgetArgs, RecallArgs, RememberArgs, VectorCommand};
 use crate::common::{self, Io, Stop, now_ms, say};
 
 /// The environment variable, and the Actions variable, that holds the index's REST URL.
@@ -12,6 +16,7 @@ pub const VECTOR_VAR: &str = "AGENT_VECTOR_URL";
 /// Sends one request to the index and returns its result.
 pub trait Index {
     fn post(&mut self, path: &str, body: &Value) -> Result<Value, Stop>;
+    fn delete(&mut self, path: &str, body: &Value) -> Result<Value, Stop>;
 }
 
 /// An Upstash Vector index with a hosted embedding model, reached over its REST API.
@@ -32,13 +37,15 @@ impl Upstash {
             .into();
         Ok(Self { base, token, agent })
     }
-}
 
-impl Index for Upstash {
-    fn post(&mut self, path: &str, body: &Value) -> Result<Value, Stop> {
-        let mut response = self
-            .agent
-            .post(format!("{}/{path}", self.base))
+    /// Send `body` on `request` with the token, and read the index's answer.
+    fn send(
+        &self,
+        path: &str,
+        request: RequestBuilder<WithBody>,
+        body: &Value,
+    ) -> Result<Value, Stop> {
+        let mut response = request
             .header("Authorization", format!("Bearer {}", self.token))
             .header("Content-Type", "application/json")
             .send(body.to_string())
@@ -49,6 +56,19 @@ impl Index for Upstash {
             .read_to_string()
             .map_err(|e| failure(path, e))?;
         answer(path, status, &text)
+    }
+}
+
+impl Index for Upstash {
+    fn post(&mut self, path: &str, body: &Value) -> Result<Value, Stop> {
+        let request = self.agent.post(format!("{}/{path}", self.base));
+        self.send(path, request, body)
+    }
+
+    // The delete endpoint takes its IDs in the body of a DELETE.
+    fn delete(&mut self, path: &str, body: &Value) -> Result<Value, Stop> {
+        let request = self.agent.delete(format!("{}/{path}", self.base));
+        self.send(path, request.force_send_body(), body)
     }
 }
 
@@ -100,6 +120,7 @@ pub fn run(index: &mut dyn Index, command: &VectorCommand, io: &mut Io) -> Resul
     match command {
         VectorCommand::Remember(a) => remember(index, a, io),
         VectorCommand::Recall(a) => recall(index, a, io),
+        VectorCommand::Forget(a) => forget(index, a, io),
     }
 }
 
@@ -163,6 +184,30 @@ pub fn recall(index: &mut dyn Index, a: &RecallArgs, io: &mut Io) -> Result<i32,
     Ok(0)
 }
 
+/// Delete the notes with the given IDs from the namespace, failing when any of them names no note.
+pub fn forget(index: &mut dyn Index, a: &ForgetArgs, io: &mut Io) -> Result<i32, Stop> {
+    let ids: BTreeSet<&str> = a.ids.iter().map(String::as_str).collect();
+    let path = format!("delete/{}", common::encode(&a.namespace));
+    let result = index.delete(&path, &json!({ "ids": ids }))?;
+    let deleted = result
+        .get("deleted")
+        .and_then(Value::as_u64)
+        .unwrap_or_default();
+    let asked = ids.len() as u64;
+    if deleted < asked {
+        return Err(Stop::Failed(format!(
+            "Deleted {deleted} of {asked} notes, since the rest name no note in {}",
+            a.namespace
+        )));
+    }
+    say!(
+        io.out,
+        "Deleted {deleted} {}",
+        if deleted == 1 { "note" } else { "notes" }
+    );
+    Ok(0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -172,6 +217,7 @@ mod tests {
     /// `reply`.
     struct Recorder {
         requests: Vec<(String, Value)>,
+        methods: Vec<&'static str>,
         reply: Result<Value, Stop>,
         fetched: Value,
     }
@@ -180,6 +226,7 @@ mod tests {
         fn answering(reply: Result<Value, Stop>) -> Self {
             Self {
                 requests: Vec::new(),
+                methods: Vec::new(),
                 reply,
                 fetched: json!([null]),
             }
@@ -189,11 +236,54 @@ mod tests {
     impl Index for Recorder {
         fn post(&mut self, path: &str, body: &Value) -> Result<Value, Stop> {
             self.requests.push((path.to_string(), body.clone()));
+            self.methods.push("POST");
             if path.starts_with("fetch/") {
                 return Ok(self.fetched.clone());
             }
             self.reply.clone()
         }
+
+        fn delete(&mut self, path: &str, body: &Value) -> Result<Value, Stop> {
+            self.requests.push((path.to_string(), body.clone()));
+            self.methods.push("DELETE");
+            self.reply.clone()
+        }
+    }
+
+    #[test]
+    fn forget_deletes_the_notes_and_says_how_many() {
+        let mut index = Recorder::answering(Ok(json!({ "deleted": 2 })));
+        let args = ["vector", "forget", "a/b", "2-mac-9", "1-win2-7", "2-mac-9"];
+        let (code, out, _) = invoke_index(&mut index, &args);
+        assert_eq!((code, out.trim()), (0, "Deleted 2 notes"));
+        assert_eq!(index.methods, ["DELETE"]);
+        // A repeated ID is sent once, so the count compares with the distinct IDs.
+        assert_eq!(
+            index.requests[0],
+            (
+                "delete/a%2Fb".to_string(),
+                json!({ "ids": ["1-win2-7", "2-mac-9"] })
+            )
+        );
+    }
+
+    #[test]
+    fn forget_fails_when_an_id_names_no_note() {
+        let mut index = Recorder::answering(Ok(json!({ "deleted": 1 })));
+        let args = ["vector", "forget", "c", "1-win2-7", "1-nobody-1"];
+        let (code, out, err) = invoke_index(&mut index, &args);
+        assert_eq!((code, out.as_str()), (1, ""));
+        assert_eq!(
+            err.trim(),
+            "Deleted 1 of 2 notes, since the rest name no note in c"
+        );
+    }
+
+    #[test]
+    fn forget_needs_an_id() {
+        let mut index = Recorder::answering(Ok(json!({ "deleted": 0 })));
+        assert_eq!(invoke_index(&mut index, &["vector", "forget", "c"]).0, 2);
+        assert!(index.requests.is_empty());
     }
 
     #[test]
