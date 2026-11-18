@@ -1,6 +1,6 @@
 [package]
 name = "upstash-arriba"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 description = "Upstash CLI that stores notes in a Vector index and recalls them by meaning and keyword"
 license = "MIT"
