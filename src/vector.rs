@@ -150,7 +150,7 @@ pub fn remember(index: &mut dyn Index, a: &RememberArgs, io: &mut Io) -> Result<
 }
 
 /// Print the namespace's notes that best match the query, each as a header, a blank line, then its
-/// text.
+/// text, or with --json as one array.
 pub fn recall(index: &mut dyn Index, a: &RecallArgs, io: &mut Io) -> Result<i32, Stop> {
     let mode = match a.mode {
         Mode::Hybrid => "HYBRID",
@@ -169,21 +169,35 @@ pub fn recall(index: &mut dyn Index, a: &RecallArgs, io: &mut Io) -> Result<i32,
     let path = format!("query-data/{}", common::encode(&a.namespace));
     let result = index.post(&path, &body)?;
     let hits = result.as_array().map(Vec::as_slice).unwrap_or_default();
-    if hits.is_empty() {
+    let notes: Vec<Value> = hits
+        .iter()
+        .map(|hit| {
+            let text = |pointer: &str| hit.pointer(pointer).and_then(Value::as_str);
+            json!({
+                "id": text("/id").unwrap_or_default(),
+                "from": text("/metadata/from").unwrap_or_default(),
+                "at": hit.pointer("/metadata/at").and_then(Value::as_u64),
+                "score": hit.get("score").and_then(Value::as_f64).unwrap_or_default(),
+                "text": text("/data").unwrap_or_default().trim_end(),
+            })
+        })
+        .collect();
+    if a.json {
+        say!(io.out, "{}", Value::Array(notes));
+        return Ok(0);
+    }
+    if notes.is_empty() {
         say!(io.err, "No note in {} matches", a.namespace);
     }
-    for hit in hits {
-        let text = |key: &str| hit.get(key).and_then(Value::as_str).unwrap_or_default();
-        let from = hit
-            .pointer("/metadata/from")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        let score = hit.get("score").and_then(Value::as_f64).unwrap_or_default();
+    for note in &notes {
+        let text = |key: &str| note[key].as_str().unwrap_or_default();
+        let score = note["score"].as_f64().unwrap_or_default();
         say!(
             io.out,
-            "--- {}\nfrom: {from}\nscore: {score:.4}\n\n{}\n",
+            "--- {}\nfrom: {}\nscore: {score:.4}\n\n{}\n",
             text("id"),
-            text("data").trim_end()
+            text("from"),
+            text("text")
         );
     }
     Ok(0)
@@ -420,6 +434,40 @@ mod tests {
         let args = ["vector", "recall", "c", "q", "--mode", "rrf"];
         assert_eq!(invoke_index(&mut index, &args).0, 2);
         assert!(index.requests.is_empty());
+    }
+
+    #[test]
+    fn recall_json_prints_the_notes_as_one_array() {
+        let hits = json!([
+            { "id": "2-win2", "score": 0.8812, "metadata": { "from": "win2", "at": 2 },
+              "data": "cross at D 236.6\n" },
+            { "id": "1-mac", "score": 0.7905, "data": "d6 at D 241.13" },
+        ]);
+        let mut index = Recorder::answering(Ok(hits));
+        let args = [
+            "vector", "recall", "c", "D 236.6", "--mode", "dense", "--json",
+        ];
+        let (code, out, err) = invoke_index(&mut index, &args);
+        assert_eq!((code, err.as_str()), (0, ""));
+        // One line, so a script reads the whole answer at once.
+        assert_eq!(out.lines().count(), 1);
+        let notes: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(
+            notes,
+            json!([
+                { "id": "2-win2", "from": "win2", "at": 2, "score": 0.8812,
+                  "text": "cross at D 236.6" },
+                // A note without metadata keeps every field.
+                { "id": "1-mac", "from": "", "at": null, "score": 0.7905, "text": "d6 at D 241.13" },
+            ])
+        );
+    }
+
+    #[test]
+    fn recall_json_prints_an_empty_array_when_nothing_matches() {
+        let mut index = Recorder::answering(Ok(json!([])));
+        let (code, out, err) = invoke_index(&mut index, &["vector", "recall", "c", "q", "--json"]);
+        assert_eq!((code, out.trim(), err.as_str()), (0, "[]", ""));
     }
 
     #[test]

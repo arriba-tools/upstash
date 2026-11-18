@@ -80,6 +80,10 @@ pub struct RecallArgs {
     /// compares between queries. sparse matches by keyword alone
     #[arg(long, value_enum, default_value_t = Mode::Hybrid)]
     pub mode: Mode,
+
+    /// Print the notes as a JSON array of objects with id, from, at, score and text
+    #[arg(long)]
+    pub json: bool,
 }
 
 /// The parts of a hybrid index a recall searches.
