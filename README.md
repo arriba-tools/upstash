@@ -64,6 +64,7 @@ figure still finds its note.
 ```
 upstash-arriba vector remember linux my-project --text "Fits cross at D 236.6"
 upstash-arriba vector recall my-project "where do the fits cross" --count 5
+upstash-arriba vector recall my-project "where do the fits cross" --mode dense
 upstash-arriba vector remember linux my-project --replace <ID> --text "Fits cross at D 236.7"
 upstash-arriba vector forget my-project <ID> [<ID>...]
 upstash-arriba upgrade
@@ -80,6 +81,11 @@ A namespace holds one project's notes. A note's ID is the milliseconds since 197
 stored it, and the ID of the process that stored it. `recall` prints each note as a header, a blank
 line, then its text. Its keyword half weighs each word by its rarity, so a figure such as `D 236.6`
 outweighs common words.
+
+A hybrid score fuses the ranks of the meaning and keyword halves, so it only orders one query's
+notes. `--mode dense` searches by meaning alone, and its score, from 0 to 1, compares between
+queries, so a script can keep the notes above a fixed score. `--mode sparse` searches by keyword
+alone.
 
 `--replace` stores a correction under the ID of the note it corrects, so `recall` no longer finds
 the old text. It refuses an ID that names no note in the namespace, rather than store a new one.

@@ -7,7 +7,7 @@ use std::time::Duration;
 use ureq::RequestBuilder;
 use ureq::typestate::WithBody;
 
-use crate::cli::{ForgetArgs, RecallArgs, RememberArgs, VectorCommand};
+use crate::cli::{ForgetArgs, Mode, RecallArgs, RememberArgs, VectorCommand};
 use crate::common::{self, Io, Stop, now_ms, say};
 
 /// The environment variables that hold the index's REST URL and token, named as the index's
@@ -152,6 +152,11 @@ pub fn remember(index: &mut dyn Index, a: &RememberArgs, io: &mut Io) -> Result<
 /// Print the namespace's notes that best match the query, each as a header, a blank line, then its
 /// text.
 pub fn recall(index: &mut dyn Index, a: &RecallArgs, io: &mut Io) -> Result<i32, Stop> {
+    let mode = match a.mode {
+        Mode::Hybrid => "HYBRID",
+        Mode::Dense => "DENSE",
+        Mode::Sparse => "SPARSE",
+    };
     let body = json!({
         "data": a.query,
         "topK": a.count,
@@ -159,6 +164,7 @@ pub fn recall(index: &mut dyn Index, a: &RecallArgs, io: &mut Io) -> Result<i32,
         "includeData": true,
         // BM25 weighs each word by its rarity, so a figure outweighs words such as "at" and "D".
         "weightingStrategy": "IDF",
+        "queryMode": mode,
     });
     let path = format!("query-data/{}", common::encode(&a.namespace));
     let result = index.post(&path, &body)?;
@@ -391,6 +397,29 @@ mod tests {
             "--- 2-win2\nfrom: win2\nscore: 0.0328\n\ncross at D 236.6\n\n\
              --- 1-mac\nfrom: mac\nscore: 0.0161\n\nd6 at D 241.13\n\n"
         );
+    }
+
+    #[test]
+    fn recall_mode_picks_the_part_of_the_index_to_search() {
+        for (mode, sent) in [
+            (None, "HYBRID"),
+            (Some("dense"), "DENSE"),
+            (Some("sparse"), "SPARSE"),
+        ] {
+            let mut index = Recorder::answering(Ok(json!([])));
+            let mut args = vec!["vector", "recall", "c", "q"];
+            args.extend(mode.map(|m| ["--mode", m]).into_iter().flatten());
+            assert_eq!(invoke_index(&mut index, &args).0, 0, "{args:?}");
+            assert_eq!(index.requests[0].1["queryMode"], sent, "{args:?}");
+        }
+    }
+
+    #[test]
+    fn recall_refuses_an_unknown_mode() {
+        let mut index = Recorder::answering(Ok(json!([])));
+        let args = ["vector", "recall", "c", "q", "--mode", "rrf"];
+        assert_eq!(invoke_index(&mut index, &args).0, 2);
+        assert!(index.requests.is_empty());
     }
 
     #[test]

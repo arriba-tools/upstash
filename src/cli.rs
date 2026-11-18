@@ -1,4 +1,4 @@
-use clap::{ArgGroup, Args, Parser, Subcommand};
+use clap::{ArgGroup, Args, Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -74,6 +74,20 @@ pub struct RecallArgs {
     #[arg(long, value_name = "N", default_value_t = 5,
           value_parser = clap::value_parser!(u64).range(1..=1000))]
     pub count: u64,
+
+    /// What to match the query by. hybrid ranks by meaning and keyword together, with scores that
+    /// only order one query's notes. dense matches by meaning alone, with a score from 0 to 1 that
+    /// compares between queries. sparse matches by keyword alone
+    #[arg(long, value_enum, default_value_t = Mode::Hybrid)]
+    pub mode: Mode,
+}
+
+/// The parts of a hybrid index a recall searches.
+#[derive(Clone, Copy, Debug, PartialEq, ValueEnum)]
+pub enum Mode {
+    Hybrid,
+    Dense,
+    Sparse,
 }
 
 #[derive(Args)]
